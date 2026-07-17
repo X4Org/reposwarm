@@ -105,6 +105,17 @@ class TestClaudeConfigOverrides:
         assert config.claude_model is None
         assert config.max_tokens is None
         assert config.temperature is None
+        assert config.force_section is None
+
+    def test_force_section_is_preserved_for_prompt_cache_bypass(self):
+        config = ClaudeConfigOverrides(force_section="__all__")
+
+        assert config.force_section == "__all__"
+        assert config.model_dump()["force_section"] == "__all__"
+
+    def test_empty_force_section_raises_validation_error(self):
+        with pytest.raises(ValidationError, match="Force section must not be empty"):
+            ClaudeConfigOverrides(force_section=" ")
     
     def test_invalid_max_tokens_raises_validation_error(self):
         """Test that invalid max_tokens raises ValidationError."""

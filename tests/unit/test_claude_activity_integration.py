@@ -160,6 +160,16 @@ class TestAnalyzeWithClaudeContextIntegration:
         assert context_dict['prompt_version'] == "2"
         assert config_overrides == {}
         assert latest_commit == "abc123def456789"
+
+    def test_force_override_survives_model_handoff_and_bypasses_prompt_cache(self):
+        from activities.investigate_activities import _should_force_prompt_cache
+
+        config = ClaudeConfigOverrides(force_section="__all__")
+        serialized = config.model_dump()
+
+        assert _should_force_prompt_cache(serialized, "APIs") is True
+        assert _should_force_prompt_cache({"force_section": "events"}, "events") is True
+        assert _should_force_prompt_cache({"force_section": "events"}, "APIs") is False
     
     def test_model_validation_prevents_invalid_input(self):
         """Test that Pydantic validation prevents invalid input."""

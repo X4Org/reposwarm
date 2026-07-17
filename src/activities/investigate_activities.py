@@ -984,6 +984,11 @@ async def cleanup_temporary_analysis_data_activity(reference_key: str) -> dict:
         return {"status": "failed", "error": str(e)}
 
 
+def _should_force_prompt_cache(config_overrides: dict, step_name: str) -> bool:
+    force_section = config_overrides.get('force_section') if config_overrides else None
+    return force_section == step_name or force_section == "__all__"
+
+
 @activity.defn
 async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> AnalyzeWithClaudeOutput:
     """
@@ -1019,14 +1024,13 @@ async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> A
         # Check prompt-level cache if commit SHA is provided
         if latest_commit and repo_name and step_name:
             # Extract version from context
-            prompt_version = context_dict.get('prompt_version', '1')
+            prompt_version = Config.prompt_cache_version(context_dict.get('prompt_version', '1'))
             
             activity.logger.info(f"Checking prompt cache for {repo_name}/{step_name} at commit {latest_commit[:8]} version={prompt_version}")
             activity.logger.info(f"DEBUG: Full context_dict = {context_dict}")
             
             # Check if this step should be forced (bypass cache)
-            force_section = getattr(config_overrides, 'force_section', None) if config_overrides else None
-            should_force_this_step = force_section and (force_section == step_name or force_section == "__all__")
+            should_force_this_step = _should_force_prompt_cache(config_overrides, step_name)
             
             if should_force_this_step:
                 activity.logger.info(f"🚀 Force section enabled for {step_name} - skipping cache check")
@@ -1064,7 +1068,7 @@ async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> A
                         repo_name=repo_name,
                         step_name=step_name,
                         commit_sha=latest_commit,
-                        prompt_version=context_dict.get('prompt_version', '1')
+                        prompt_version=prompt_version
                     )
                     result_key = cache_key_obj.to_storage_key()
                 
@@ -1129,7 +1133,7 @@ async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> A
         result_key = None
         try:
             # Get version from context
-            prompt_version = context_dict.get('prompt_version', '1')
+            prompt_version = Config.prompt_cache_version(context_dict.get('prompt_version', '1'))
             
             # Get appropriate storage client and create cache instance
             if os.environ.get('PROMPT_CONTEXT_STORAGE') == 'file':
@@ -2139,4 +2143,4 @@ async def cache_dependencies_activity(repo_name: str, dependencies_data: dict) -
             "status": "failed",
             "deps_reference_key": None,
             "error": str(e)
-        } 
+        }

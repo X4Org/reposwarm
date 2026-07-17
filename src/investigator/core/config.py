@@ -15,8 +15,16 @@ class Config:
     # X4 modification: opt-in bounded source evidence for truthful file/line
     # citations. Disabled by default to preserve upstream behavior.
     SOURCE_GROUNDING = os.getenv('REPOSWARM_SOURCE_GROUNDING', 'false').lower() in {'1', 'true', 'yes'}
+    SOURCE_GROUNDING_POLICY_VERSION = "2"
     SOURCE_BUNDLE_MAX_CHARS = int(os.getenv('REPOSWARM_SOURCE_BUNDLE_MAX_CHARS', '120000'))
     SOURCE_BUNDLE_MAX_FILES = int(os.getenv('REPOSWARM_SOURCE_BUNDLE_MAX_FILES', '120'))
+
+    @staticmethod
+    def prompt_cache_version(prompt_version: str) -> str:
+        """Bind prompt cache entries to X4 grounding semantics when enabled."""
+        if Config.SOURCE_GROUNDING:
+            return f"{prompt_version}-x4g{Config.SOURCE_GROUNDING_POLICY_VERSION}"
+        return prompt_version
     
     # Valid Claude model names for validation (4.x models only)
     # See: https://platform.claude.com/docs/en/about-claude/models/overview
