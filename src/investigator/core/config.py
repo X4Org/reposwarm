@@ -11,6 +11,12 @@ class Config:
     # Claude API settings - read from env, with sensible defaults
     CLAUDE_MODEL = os.getenv('ANTHROPIC_MODEL') or os.getenv('CLAUDE_MODEL') or "claude-sonnet-4-6-20260120"
     MAX_TOKENS = int(os.getenv('MAX_TOKENS', '6000'))
+
+    # X4 modification: opt-in bounded source evidence for truthful file/line
+    # citations. Disabled by default to preserve upstream behavior.
+    SOURCE_GROUNDING = os.getenv('REPOSWARM_SOURCE_GROUNDING', 'false').lower() in {'1', 'true', 'yes'}
+    SOURCE_BUNDLE_MAX_CHARS = int(os.getenv('REPOSWARM_SOURCE_BUNDLE_MAX_CHARS', '120000'))
+    SOURCE_BUNDLE_MAX_FILES = int(os.getenv('REPOSWARM_SOURCE_BUNDLE_MAX_FILES', '120'))
     
     # Valid Claude model names for validation (4.x models only)
     # See: https://platform.claude.com/docs/en/about-claude/models/overview

@@ -22,6 +22,19 @@ class ClaudeAnalyzer:
         "claude-opus-4-20250514": "us.anthropic.claude-opus-4-20250514-v1:0",
     }
 
+    # X4 modification: when the worker supplies a source bundle, require every
+    # concrete claim to remain traceable to its line-addressable evidence.
+    SOURCE_GROUNDING_INSTRUCTIONS = """## Mandatory source-evidence rules
+
+- Treat the Source Evidence Bundle as the factual basis for this analysis.
+- Cite concrete claims with one or more exact `relative/path.ext:line` references from the bundle.
+- Do not invent file contents, endpoints, events, controls, or deployment mechanisms.
+- If evidence is insufficient, state what remains unknown and cite the files that were inspected; do not claim source access was unavailable.
+- Distinguish "not found in the supplied evidence" from "does not exist".
+- Keep the requested RepoSwarm section name and answer the requested analysis directly.
+
+"""
+
     def __init__(self, api_key: str, logger):
         self.logger = logger
         self.use_bedrock = (
@@ -117,6 +130,8 @@ class ClaudeAnalyzer:
         
         # Replace placeholders in the cleaned prompt
         prompt = cleaned_template.replace("{repo_structure}", repo_structure)
+        if "## Source Evidence Bundle" in repo_structure:
+            prompt = f"{self.SOURCE_GROUNDING_INSTRUCTIONS}{prompt}"
         
         # Add previous context if available
         if previous_context:
@@ -167,4 +182,4 @@ class ClaudeAnalyzer:
         Returns:
             Analysis result from Claude
         """
-        return self.analyze_with_context(prompt_template, repo_structure, None) 
+        return self.analyze_with_context(prompt_template, repo_structure, None)

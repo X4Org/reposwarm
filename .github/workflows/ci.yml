@@ -98,7 +98,7 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
-            ghcr.io/reposwarm/worker:latest
-            ghcr.io/reposwarm/worker:${{ github.sha }}
+            ghcr.io/x4org/reposwarm-worker:latest
+            ghcr.io/x4org/reposwarm-worker:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

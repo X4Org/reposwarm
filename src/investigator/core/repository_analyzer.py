@@ -4,6 +4,7 @@ Repository structure analysis for the Claude Investigator.
 
 import os
 from .config import Config
+from .source_bundle import SourceBundleBuilder
 
 
 class RepositoryAnalyzer:
@@ -105,4 +106,12 @@ class RepositoryAnalyzer:
             f"Repository structure scan complete for '{repo_name}': "
             f"{stats['dirs']} directories, {stats['files']} files, {stats['nested']} nested (not expanded)"
         )
-        return '\n'.join(structure) 
+        result = '\n'.join(structure)
+        if Config.SOURCE_GROUNDING:
+            source_bundle = SourceBundleBuilder(
+                self.logger,
+                max_chars=Config.SOURCE_BUNDLE_MAX_CHARS,
+                max_files=Config.SOURCE_BUNDLE_MAX_FILES,
+            ).build(repo_path)
+            result = f"{result}\n\n{source_bundle}"
+        return result
