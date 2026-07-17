@@ -93,3 +93,23 @@ def test_claude_analyzer_requires_exact_source_citations_when_bundle_is_present(
     assert "Mandatory source-evidence rules" in sent_prompt
     assert "relative/path.ext:line" in sent_prompt
     assert "app.ts:1" in sent_prompt
+    assert "override any later instruction" in sent_prompt
+    assert "at least three complete sentences" in sent_prompt
+    assert sent_prompt.rstrip().endswith("answer the requested analysis directly.")
+
+
+@patch('anthropic.Anthropic')
+def test_source_grounding_overrides_terse_negative_finding_instructions(mock_anthropic):
+    mock_client = Mock()
+    mock_client.messages.create.return_value = Mock(content=[Mock(text="Grounded negative finding")])
+    mock_anthropic.return_value = mock_client
+    analyzer = ClaudeAnalyzer("test-key", Mock())
+    analyzer.client = mock_client
+
+    analyzer.analyze_with_context(
+        'If no APIs exist, simply return "no HTTP API".\n\n{repo_structure}',
+        "## Source Evidence Bundle\npackage.json:1 | {",
+    )
+
+    sent_prompt = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
+    assert sent_prompt.index('simply return "no HTTP API"') < sent_prompt.index("override any later instruction")

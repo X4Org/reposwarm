@@ -31,6 +31,8 @@ class ClaudeAnalyzer:
 - Do not invent file contents, endpoints, events, controls, or deployment mechanisms.
 - If evidence is insufficient, state what remains unknown and cite the files that were inspected; do not claim source access was unavailable.
 - Distinguish "not found in the supplied evidence" from "does not exist".
+- These rules override any later instruction to return only a short response such as "no HTTP API", "no events", or "No LLM usage detected".
+- For a negative finding, write at least three complete sentences: describe the bounded search scope, cite one or more relevant `relative/path.ext:line` entries, and explain what was not found without turning that into a repository-wide certainty.
 - Keep the requested RepoSwarm section name and answer the requested analysis directly.
 
 """
@@ -130,8 +132,7 @@ class ClaudeAnalyzer:
         
         # Replace placeholders in the cleaned prompt
         prompt = cleaned_template.replace("{repo_structure}", repo_structure)
-        if "## Source Evidence Bundle" in repo_structure:
-            prompt = f"{self.SOURCE_GROUNDING_INSTRUCTIONS}{prompt}"
+        source_grounded = "## Source Evidence Bundle" in repo_structure
         
         # Add previous context if available
         if previous_context:
@@ -140,6 +141,11 @@ class ClaudeAnalyzer:
         else:
             # Remove the placeholder if no context
             prompt = prompt.replace("{previous_context}", "")
+
+        # Put the evidence rules last so legacy prompts that ask for a terse
+        # "none found" answer cannot override the source-grounding contract.
+        if source_grounded:
+            prompt = f"{prompt}\n\n{self.SOURCE_GROUNDING_INSTRUCTIONS}"
         
         self.logger.debug(f"Prompt created ({len(prompt)} characters)")
         self.logger.debug(f"Prompt preview (first 1000 chars): {prompt[:1000]}...")
