@@ -5,9 +5,58 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      export_digest:
+        description: Immutable worker image digest to export for control-node recovery
+        required: true
+        type: string
 
 jobs:
+  export-worker:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Validate requested digest
+        env:
+          DIGEST: ${{ inputs.export_digest }}
+        run: |
+          if [[ ! "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "export_digest must be an immutable sha256 digest" >&2
+            exit 1
+          fi
+
+      - name: Export exact amd64 image from GHCR
+        env:
+          DIGEST: ${{ inputs.export_digest }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REF="ghcr.io/x4org/reposwarm-worker@$DIGEST"
+          ARCHIVE="$RUNNER_TEMP/reposwarm-worker-amd64.oci.tar"
+          sudo ctr -n reposwarm-export images pull \
+            --platform linux/amd64 \
+            --user "$GITHUB_ACTOR:$GHCR_TOKEN" \
+            "$REF"
+          sudo ctr -n reposwarm-export images export \
+            --platform linux/amd64 \
+            "$ARCHIVE" \
+            "$REF"
+          sudo chown "$USER:$USER" "$ARCHIVE"
+          zstd -T0 -10 "$ARCHIVE" -o "$ARCHIVE.zst"
+
+      - name: Upload short-lived recovery archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: reposwarm-worker-amd64
+          path: ${{ runner.temp }}/reposwarm-worker-amd64.oci.tar.zst
+          retention-days: 1
+          compression-level: 0
+
   unit-tests:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       matrix:
