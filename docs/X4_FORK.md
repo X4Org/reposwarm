@@ -34,6 +34,13 @@ The X4 control plane must deploy an immutable worker digest and record it in the
 reviewed RepoSwarm runtime lock. Never deploy this fork using an unverified
 moving tag.
 
+If GHCR visibility or host credentials temporarily prevent a control node from
+pulling an already approved digest, manually dispatch CI with that digest. Its
+short-lived amd64 OCI archive preserves the registry index digest when imported
+through the control node's `moby` containerd namespace. This is a recovery path,
+not a substitute for granting production hosts normal read access to the
+package.
+
 ## Upstream reconciliation
 
 1. Fetch `reposwarm/reposwarm` as the `upstream` remote.
