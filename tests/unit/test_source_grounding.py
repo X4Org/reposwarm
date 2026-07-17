@@ -73,6 +73,13 @@ def test_repository_analyzer_appends_source_bundle_only_when_enabled(tmp_path: P
     assert "app.ts:1" in grounded
 
 
+def test_source_grounding_policy_versions_prompt_cache_entries():
+    with patch.object(Config, "SOURCE_GROUNDING", False):
+        assert Config.prompt_cache_version("2") == "2"
+    with patch.object(Config, "SOURCE_GROUNDING", True):
+        assert Config.prompt_cache_version("2") == "2-x4g2"
+
+
 @patch('anthropic.Anthropic')
 def test_claude_analyzer_requires_exact_source_citations_when_bundle_is_present(mock_anthropic):
     mock_client = Mock()

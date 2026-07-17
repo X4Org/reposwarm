@@ -169,12 +169,19 @@ class ClaudeConfigOverrides(BaseModel):
     claude_model: Optional[str] = Field(None, description="Claude model to use (e.g., claude-3-sonnet-20240229)")
     max_tokens: Optional[int] = Field(None, ge=1, le=200000, description="Maximum tokens for Claude response")
     temperature: Optional[float] = Field(None, ge=0.0, le=1.0, description="Temperature for Claude response")
+    force_section: Optional[str] = Field(None, description="Prompt name to re-run, or '__all__' to bypass all prompt caches")
     
     @validator('claude_model')
     def validate_claude_model(cls, v):
         """Ensure Claude model is valid if provided."""
         if v is not None and (not v or not v.strip()):
             raise ValueError("Claude model must not be empty if provided")
+        return v.strip() if v else v
+
+    @validator('force_section')
+    def validate_force_section(cls, v):
+        if v is not None and (not v or not v.strip()):
+            raise ValueError("Force section must not be empty if provided")
         return v.strip() if v else v
 
 
