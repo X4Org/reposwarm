@@ -15,7 +15,7 @@ class Config:
     # X4 modification: opt-in bounded source evidence for truthful file/line
     # citations. Disabled by default to preserve upstream behavior.
     SOURCE_GROUNDING = os.getenv('REPOSWARM_SOURCE_GROUNDING', 'false').lower() in {'1', 'true', 'yes'}
-    SOURCE_GROUNDING_POLICY_VERSION = "2"
+    SOURCE_GROUNDING_POLICY_VERSION = "3"
     SOURCE_BUNDLE_MAX_CHARS = int(os.getenv('REPOSWARM_SOURCE_BUNDLE_MAX_CHARS', '120000'))
     SOURCE_BUNDLE_MAX_FILES = int(os.getenv('REPOSWARM_SOURCE_BUNDLE_MAX_FILES', '120'))
 

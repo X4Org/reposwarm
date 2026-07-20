@@ -3,6 +3,7 @@ Claude API integration for the Claude Investigator.
 """
 
 import os
+import re
 from typing import Optional
 from .config import Config
 
@@ -36,6 +37,13 @@ class ClaudeAnalyzer:
 - Keep the requested RepoSwarm section name and answer the requested analysis directly.
 
 """
+
+    SOURCE_CITATION_PATTERN = re.compile(
+        r"(?<![\w./-])[\w.-]+(?:/[\w.-]+)*\.[A-Za-z0-9]+:\d+"
+    )
+    SOURCE_GROUNDING_REPAIR_INSTRUCTIONS = """Your previous response does not satisfy the mandatory source-evidence rules.
+
+Rewrite the complete answer. It must contain at least 80 characters and at least one exact `relative/path.ext:line` citation copied from the Source Evidence Bundle. If the requested subsystem was not found, use at least three complete sentences to describe the bounded evidence inspected, cite relevant evidence, and state only that no matching implementation was found in that evidence. Do not return a terse phrase such as "no events" or "no database"."""
 
     def __init__(self, api_key: str, logger):
         self.logger = logger
@@ -89,7 +97,7 @@ class ClaudeAnalyzer:
         """
         if not prompt_template:
             return prompt_template
-        
+
         lines = prompt_template.split('\n')
         
         # Only clean if version line exists at the beginning
@@ -108,6 +116,14 @@ class ClaudeAnalyzer:
         else:
             # No version line found, return as-is
             return prompt_template
+
+    @classmethod
+    def _is_source_grounded_response(cls, analysis_text: str) -> bool:
+        """Return whether a model response meets the minimum grounding contract."""
+        return (
+            len(analysis_text.strip()) >= 80
+            and cls.SOURCE_CITATION_PATTERN.search(analysis_text) is not None
+        )
     
     def analyze_with_context(self, prompt_template: str, repo_structure: str, 
                            previous_context: Optional[str] = None,
@@ -170,6 +186,27 @@ class ClaudeAnalyzer:
             analysis_text = response.content[0].text
             self.logger.info(f"Received analysis from Claude ({len(analysis_text)} characters)")
             self.logger.debug(f"Analysis preview (first 1000 chars): {analysis_text[:1000]}...")
+
+            if source_grounded and not self._is_source_grounded_response(analysis_text):
+                self.logger.warning(
+                    "Source-grounded response was too short or lacked a line citation; retrying once"
+                )
+                repair_response = self.client.messages.create(
+                    model=model_id,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": analysis_text},
+                        {"role": "user", "content": self.SOURCE_GROUNDING_REPAIR_INSTRUCTIONS},
+                    ],
+                )
+                analysis_text = repair_response.content[0].text
+                self.logger.info(
+                    f"Received repaired analysis from Claude ({len(analysis_text)} characters)"
+                )
+                self.logger.debug(
+                    f"Repaired analysis preview (first 1000 chars): {analysis_text[:1000]}..."
+                )
             
             return analysis_text
             
