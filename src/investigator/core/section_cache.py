@@ -17,6 +17,7 @@ from typing import Any
 SECTION_CACHE_POLICY_VERSION = "1"
 
 _SOURCE_BUNDLE_MARKER = "## Source Evidence Bundle"
+_TEMP_REPO_HEADER = re.compile(r"(?m)^Repository: (?P<name>.+)_[0-9a-f]{8}$")
 _SOURCE_BLOCK = re.compile(
     r"\n\n### `(?P<path>[^`]+)`\n\n```text\n(?P<body>.*?)\n```",
     re.DOTALL,
@@ -58,6 +59,7 @@ _BASELINE_NAMES = {
 
 def _section_evidence(repo_structure: str, step_name: str) -> str:
     """Return the deterministic evidence subset relevant to one section."""
+    repo_structure = _TEMP_REPO_HEADER.sub(r"Repository: \g<name>", repo_structure, count=1)
     marker_at = repo_structure.find(_SOURCE_BUNDLE_MARKER)
     if marker_at < 0 or step_name in _GLOBAL_SECTIONS:
         return repo_structure
