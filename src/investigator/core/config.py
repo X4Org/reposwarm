@@ -18,12 +18,16 @@ class Config:
     SOURCE_GROUNDING_POLICY_VERSION = "3"
     SOURCE_BUNDLE_MAX_CHARS = int(os.getenv('REPOSWARM_SOURCE_BUNDLE_MAX_CHARS', '120000'))
     SOURCE_BUNDLE_MAX_FILES = int(os.getenv('REPOSWARM_SOURCE_BUNDLE_MAX_FILES', '120'))
+    SECTION_CACHE = os.getenv('REPOSWARM_SECTION_CACHE', 'false').lower() in {'1', 'true', 'yes'}
 
     @staticmethod
     def prompt_cache_version(prompt_version: str) -> str:
         """Bind prompt cache entries to X4 grounding semantics when enabled."""
         if Config.SOURCE_GROUNDING:
-            return f"{prompt_version}-x4g{Config.SOURCE_GROUNDING_POLICY_VERSION}"
+            suffix = f"-x4g{Config.SOURCE_GROUNDING_POLICY_VERSION}"
+            if Config.SECTION_CACHE:
+                suffix += "-sc1"
+            return f"{prompt_version}{suffix}"
         return prompt_version
     
     # Valid Claude model names for validation (4.x models only)

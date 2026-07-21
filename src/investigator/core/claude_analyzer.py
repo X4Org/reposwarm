@@ -127,7 +127,8 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
     
     def analyze_with_context(self, prompt_template: str, repo_structure: str, 
                            previous_context: Optional[str] = None,
-                           config_overrides: Optional[dict] = None) -> str:
+                           config_overrides: Optional[dict] = None,
+                           usage_tag: Optional[str] = None) -> str:
         """
         Analyze using Claude with optional context from previous analyses.
         
@@ -177,10 +178,15 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
             self.logger.info("Sending analysis request to Claude API")
             self.logger.debug(f"Using model: {model_id}, max_tokens: {max_tokens}")
 
+            request_kwargs = {
+                "model": model_id,
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            if usage_tag:
+                request_kwargs["metadata"] = {"user_id": usage_tag[:256]}
             response = self.client.messages.create(
-                model=model_id,
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}]
+                **request_kwargs
             )
             
             analysis_text = response.content[0].text
@@ -194,6 +200,7 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
                 repair_response = self.client.messages.create(
                     model=model_id,
                     max_tokens=max_tokens,
+                    **({"metadata": {"user_id": usage_tag[:256]}} if usage_tag else {}),
                     messages=[
                         {"role": "user", "content": prompt},
                         {"role": "assistant", "content": analysis_text},

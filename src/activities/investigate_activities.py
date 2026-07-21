@@ -1019,14 +1019,44 @@ async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> A
         from investigator.core.config import Config
         from utils.dynamodb_client import get_dynamodb_client
         from activities.investigation_cache import InvestigationCache
+        from investigator.core.section_cache import section_cache_identity
         import logging
+
+        # Load the effective inputs before checking the cache. In incremental
+        # mode the cache identity is content-addressed rather than commit-wide.
+        context = create_prompt_context_from_dict(context_dict)
+        activity.logger.info("Retrieving prompt and context data")
+        data = context.get_prompt_and_context()
+        prompt_content = data["prompt_content"]
+        repo_structure = data["repo_structure"]
+        context_to_use = data["context"]
+        if not prompt_content or not repo_structure:
+            raise Exception("Invalid data: missing prompt_content or repo_structure")
+
+        prompt_version = Config.prompt_cache_version(context_dict.get('prompt_version', '1'))
+        cache_identity = latest_commit
+        if Config.SECTION_CACHE:
+            cache_config = {
+                **config_overrides,
+                'claude_model': config_overrides.get('claude_model') or Config.CLAUDE_MODEL,
+                'max_tokens': config_overrides.get('max_tokens') or Config.MAX_TOKENS,
+            }
+            cache_identity = section_cache_identity(
+                repo_structure=repo_structure,
+                prompt_content=prompt_content,
+                previous_context=context_to_use,
+                step_name=step_name,
+                prompt_version=prompt_version,
+                config_overrides=cache_config,
+            )
+            activity.logger.info(
+                f"Section cache identity for {repo_name}/{step_name}: {cache_identity[:12]}"
+            )
         
         # Check prompt-level cache if commit SHA is provided
-        if latest_commit and repo_name and step_name:
+        if cache_identity and repo_name and step_name:
             # Extract version from context
-            prompt_version = Config.prompt_cache_version(context_dict.get('prompt_version', '1'))
-            
-            activity.logger.info(f"Checking prompt cache for {repo_name}/{step_name} at commit {latest_commit[:8]} version={prompt_version}")
+            activity.logger.info(f"Checking prompt cache for {repo_name}/{step_name} at identity {cache_identity[:12]} version={prompt_version}")
             activity.logger.info(f"DEBUG: Full context_dict = {context_dict}")
             
             # Check if this step should be forced (bypass cache)
@@ -1050,7 +1080,7 @@ async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> A
                 cache = InvestigationCache(storage_client)
                 
                 # Check if this prompt needs analysis for this commit AND version
-                cache_check = cache.check_prompt_needs_analysis(repo_name, step_name, latest_commit, prompt_version)
+                cache_check = cache.check_prompt_needs_analysis(repo_name, step_name, cache_identity, prompt_version)
             
             if cache_check["cached_result"]:
                 # We have a cached result, use it
@@ -1067,7 +1097,7 @@ async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> A
                     cache_key_obj = KeyNameCreator.create_prompt_cache_key(
                         repo_name=repo_name,
                         step_name=step_name,
-                        commit_sha=latest_commit,
+                        commit_sha=cache_identity,
                         prompt_version=prompt_version
                     )
                     result_key = cache_key_obj.to_storage_key()
@@ -1091,20 +1121,6 @@ async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> A
                     f"No cache hit for {repo_name}/{step_name} - {cache_check['reason']}"
                 )
         
-        # Create PromptContext from dictionary using factory
-        context = create_prompt_context_from_dict(context_dict)
-        
-        # Get prompt data and context from DynamoDB
-        activity.logger.info(f"Retrieving prompt and context data")
-        data = context.get_prompt_and_context()
-        
-        prompt_content = data["prompt_content"]
-        repo_structure = data["repo_structure"]
-        context_to_use = data["context"]
-        
-        if not prompt_content or not repo_structure:
-            raise Exception(f"Invalid data: missing prompt_content or repo_structure")
-        
         activity.logger.info(f"Successfully prepared data for Claude analysis")
         
         # Create a logger for the ClaudeAnalyzer
@@ -1124,7 +1140,8 @@ async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> A
             prompt_content, 
             repo_structure, 
             context_to_use,
-            config_overrides=config_overrides
+            config_overrides=config_overrides,
+            usage_tag=f"reposwarm:{repo_name}:{step_name}",
         )
         
         activity.logger.info(f"Claude analysis completed successfully ({len(result)} characters)")
@@ -1144,8 +1161,9 @@ async def analyze_with_claude_context(input_params: AnalyzeWithClaudeInput) -> A
                 storage_client = get_dynamodb_client()
             cache = InvestigationCache(storage_client)
             
-            # Use commit SHA if available, otherwise use a placeholder
-            commit_to_use = latest_commit if latest_commit else "no-commit"
+            # In section-cache mode this is a content fingerprint. The storage
+            # schema retains the legacy commit_sha field for compatibility.
+            commit_to_use = cache_identity if cache_identity else "no-commit"
             
             # Save with cache key format (includes version and commit)
             cache_save_result = cache.save_prompt_result(

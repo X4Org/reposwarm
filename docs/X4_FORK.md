@@ -14,6 +14,9 @@ support truthful source and line citations.
 - Exclusion of dotenv, key/certificate, lock, generated, and binary files.
 - Redaction of credential-like assignments and private-key blocks.
 - Mandatory evidence instructions when a source bundle is present.
+- Opt-in content-addressed prompt caching based on relevant section evidence,
+  prompt/model policy, and dependency outputs instead of the whole commit.
+- A non-secret `reposwarm:<repo>:<section>` request tag for usage accounting.
 - X4-owned worker images at `ghcr.io/x4org/reposwarm-worker`.
 
 All other RepoSwarm behavior should remain upstream-shaped. Do not add X4
@@ -28,7 +31,15 @@ Source grounding is disabled by default. X4 enables and bounds it through:
 REPOSWARM_SOURCE_GROUNDING=true
 REPOSWARM_SOURCE_BUNDLE_MAX_CHARS=120000
 REPOSWARM_SOURCE_BUNDLE_MAX_FILES=120
+REPOSWARM_SECTION_CACHE=true
 ```
+
+Section caching is disabled by default. When enabled, broad overview, module,
+entity, data-flow, and security prompts remain bound to all supplied source
+evidence. Specialized prompts select a conservative evidence subset by path
+and content keywords. Their actual upstream section context is part of the
+identity, so a changed dependency invalidates downstream sections. Force mode
+continues to bypass all prompt caches.
 
 The X4 control plane must deploy an immutable worker digest and record it in the
 reviewed RepoSwarm runtime lock. Never deploy this fork using an unverified
