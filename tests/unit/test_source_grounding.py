@@ -115,6 +115,31 @@ src/db.ts:1 | export const schema = 'users';
     assert section_cache_identity(repo_structure=before, **common) == section_cache_identity(repo_structure=after, **common)
 
 
+def test_section_cache_ignores_generated_checkout_suffix():
+    before = """Repository: fixture_0bf8526a
+============================
+
+  api.ts
+
+## Source Evidence Bundle
+
+### `src/api.ts`
+
+```text
+src/api.ts:1 | export const route = '/v1';
+```"""
+    after = before.replace("fixture_0bf8526a", "fixture_9bb59064")
+    common = {
+        "prompt_content": "Analyze {repo_structure}",
+        "previous_context": None,
+        "step_name": "hl_overview",
+        "prompt_version": "2-x4g3-sc1",
+        "config_overrides": {"claude_model": "test-model"},
+    }
+
+    assert section_cache_identity(repo_structure=before, **common) == section_cache_identity(repo_structure=after, **common)
+
+
 def test_section_cache_invalidates_matching_evidence_and_global_sections():
     before = """Repository: fixture
 
