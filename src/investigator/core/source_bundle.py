@@ -60,6 +60,16 @@ class SourceBundleBuilder:
         r"(?i)\b(api[_-]?key|client[_-]?secret|password|private[_-]?key|"
         r"access[_-]?token|refresh[_-]?token|connection[_-]?string)\b(\s*[:=]\s*)(.+)$"
     )
+    _ENV_REFERENCE = (
+        r"(?:process\.env(?:\.[A-Z0-9_]+|\[['\"][A-Z0-9_]+['\"]\])|"
+        r"os\.(?:environ\[['\"][A-Z0-9_]+['\"]\]|getenv\(['\"][A-Z0-9_]+['\"]\))|"
+        r"ENV(?:\[['\"][A-Z0-9_]+['\"]\]|\.fetch\(['\"][A-Z0-9_]+['\"]\))|"
+        r"\$\{[A-Z0-9_]+\})"
+    )
+    SAFE_SECRET_REFERENCE = re.compile(
+        rf"^\s*{_ENV_REFERENCE}(?:\s*(?:\|\||\?\?)\s*{_ENV_REFERENCE})*\s*[,;]?\s*$",
+        re.IGNORECASE,
+    )
 
     def __init__(
         self,
@@ -204,9 +214,15 @@ class SourceBundleBuilder:
                 value = "[REDACTED PRIVATE KEY]"
             if "-----END" in value and "PRIVATE KEY-----" in value:
                 in_private_key = False
-            value = self.SECRET_ASSIGNMENT.sub(lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]", value)
+            value = self.SECRET_ASSIGNMENT.sub(self._redact_secret_assignment, value)
             rendered.append(f"{candidate.relative_path}:{line_number} | {value}")
         return "\n".join(rendered)
+
+    def _redact_secret_assignment(self, match: re.Match) -> str:
+        """Preserve non-secret environment references while redacting values."""
+        if self.SAFE_SECRET_REFERENCE.fullmatch(match.group(3)):
+            return match.group(0)
+        return f"{match.group(1)}{match.group(2)}[REDACTED]"
 
     def _select_lines(self, lines: list[str]) -> list[int]:
         if len(lines) <= self.max_lines_per_file:
