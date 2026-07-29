@@ -271,3 +271,74 @@ def test_source_grounding_retries_a_terse_uncited_response_once(mock_anthropic):
     assert repair_messages[1] == {"role": "assistant", "content": "no events"}
     assert "at least 80 characters" in repair_messages[2]["content"]
     assert "relative/path.ext:line" in repair_messages[2]["content"]
+
+
+@patch('anthropic.Anthropic')
+def test_source_grounding_repairs_missing_paths_and_out_of_bundle_ranges(mock_anthropic):
+    mock_client = Mock()
+    invalid_result = (
+        "The API implementation is described at src/missing.ts:10 and "
+        "src/api.ts:1-4, which purportedly establishes its request boundary."
+    )
+    repaired_result = (
+        "The supplied evidence shows the API request boundary at src/api.ts:1-2. "
+        "This claim is limited to the exact lines present in the source bundle."
+    )
+    mock_client.messages.create.side_effect = [
+        Mock(content=[Mock(text=invalid_result)]),
+        Mock(content=[Mock(text=repaired_result)]),
+    ]
+    mock_anthropic.return_value = mock_client
+    analyzer = ClaudeAnalyzer("test-key", Mock())
+    analyzer.client = mock_client
+
+    result = analyzer.analyze_with_context(
+        "Analyze APIs from {repo_structure}",
+        "## Source Evidence Bundle\n"
+        "src/api.ts:1 | export const route = '/health';\n"
+        "src/api.ts:2 | export const method = 'GET';",
+    )
+
+    assert result == repaired_result
+    assert mock_client.messages.create.call_count == 2
+    repair_prompt = mock_client.messages.create.call_args.kwargs["messages"][2]["content"]
+    assert "cited path is absent from the Source Evidence Bundle: src/missing.ts" in repair_prompt
+    assert "cited range is absent from the Source Evidence Bundle: src/api.ts:1-4" in repair_prompt
+
+
+@patch('anthropic.Anthropic')
+def test_source_grounding_repairs_unverified_high_severity_security_findings(mock_anthropic):
+    mock_client = Mock()
+    invalid_result = (
+        "**Severity:** HIGH\n"
+        "**Classification:** Architecture risk\n"
+        "**Evidence status:** Partial\n"
+        "**Exploit preconditions:** Administrative log access.\n"
+        "The logging risk is visible at src/logger.ts:1."
+    )
+    repaired_result = (
+        "**Severity:** MEDIUM\n"
+        "**Classification:** Architecture risk\n"
+        "**Evidence status:** Partial\n"
+        "**Exploit preconditions:** Administrative log access.\n"
+        "**Existing controls checked:** Operator-only log access.\n"
+        "The bounded risk is visible at src/logger.ts:1."
+    )
+    mock_client.messages.create.side_effect = [
+        Mock(content=[Mock(text=invalid_result)]),
+        Mock(content=[Mock(text=repaired_result)]),
+    ]
+    mock_anthropic.return_value = mock_client
+    analyzer = ClaudeAnalyzer("test-key", Mock())
+    analyzer.client = mock_client
+
+    result = analyzer.analyze_with_context(
+        "## X4 evidence classification contract\nAnalyze security from {repo_structure}",
+        "## Source Evidence Bundle\nsrc/logger.ts:1 | console.error(error.stack);",
+    )
+
+    assert result == repaired_result
+    assert mock_client.messages.create.call_count == 2
+    repair_prompt = mock_client.messages.create.call_args.kwargs["messages"][2]["content"]
+    assert "re-evaluate severity" in repair_prompt
+    assert "missing verified evidence fields" in repair_prompt
