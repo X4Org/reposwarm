@@ -37,6 +37,26 @@ def test_source_bundle_contains_line_addressable_evidence_and_redacts_secrets(tm
     assert "must-not-leak" not in bundle
 
 
+def test_source_bundle_preserves_secret_environment_references(tmp_path: Path):
+    source = tmp_path / "src" / "db.ts"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "const config = {\n"
+        "  password: process.env.DB_READ_PASSWORD || process.env.DB_PASSWORD,\n"
+        "  apiKey: process.env.API_KEY,\n"
+        "  clientSecret: 'live-secret-value',\n"
+        "};\n",
+        encoding="utf-8",
+    )
+
+    bundle = SourceBundleBuilder(logging.getLogger(__name__), max_chars=10_000).build(str(tmp_path))
+
+    assert "password: process.env.DB_READ_PASSWORD || process.env.DB_PASSWORD" in bundle
+    assert "apiKey: process.env.API_KEY" in bundle
+    assert "live-secret-value" not in bundle
+    assert "clientSecret: [REDACTED]" in bundle
+
+
 def test_source_bundle_is_bounded_and_diverse(tmp_path: Path):
     for area in ("apps/admin", "packages/core", "src/runtime"):
         directory = tmp_path / area
