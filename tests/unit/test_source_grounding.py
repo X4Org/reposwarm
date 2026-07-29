@@ -437,3 +437,75 @@ def test_source_grounding_repairs_high_findings_based_on_missing_controls(mock_a
     assert result == repaired_result
     repair_prompt = mock_client.messages.create.call_args.kwargs["messages"][2]["content"]
     assert "uncertainty or missing-control reasoning" in repair_prompt
+
+
+def test_security_validation_bounds_each_finding_at_the_next_severity():
+    analysis = (
+        "**Severity:** HIGH\n"
+        "**Classification:** Verified vulnerability\n"
+        "**Evidence status:** Confirmed\n"
+        "**Exploit preconditions:** An unauthenticated attacker can intercept the connection.\n"
+        "**Existing controls checked:** Host verification is explicitly disabled.\n"
+        "The executable setting is at pipeline.yml:1.\n\n"
+        "**Severity:** MEDIUM\n"
+        "**Classification:** Architecture risk\n"
+        "**Evidence status:** Partial\n"
+        "**Exploit preconditions:** A stronger proof-of-possession mechanism is not visible.\n"
+        "**Existing controls checked:** Request validation is present.\n"
+        "The bounded design risk is at src/auth.ts:1."
+    )
+
+    issues = ClaudeAnalyzer._security_evidence_issues(
+        analysis,
+        "## X4 evidence classification contract",
+    )
+
+    assert issues == []
+
+
+def test_security_validation_rejects_high_findings_that_require_ci_log_access():
+    analysis = (
+        "**Severity:** CRITICAL\n"
+        "**Classification:** Verified vulnerability\n"
+        "**Evidence status:** Confirmed\n"
+        "**Exploit preconditions:** The attacker needs access to CI job logs.\n"
+        "**Existing controls checked:** No masking is shown.\n"
+        "The pipeline output is at .gitlab-ci.yml:1."
+    )
+
+    issues = ClaudeAnalyzer._security_evidence_issues(
+        analysis,
+        "## X4 evidence classification contract",
+    )
+
+    assert any("privileged-only prerequisite" in issue for issue in issues)
+
+
+@patch('anthropic.Anthropic')
+def test_source_grounding_downgrades_security_claims_left_invalid_after_repair(mock_anthropic):
+    invalid_result = (
+        "**Severity:** HIGH\n"
+        "**Classification:** Verified vulnerability\n"
+        "**Evidence status:** Confirmed\n"
+        "**Exploit preconditions:** A valid API key is required.\n"
+        "**Existing controls checked:** No stronger proof-of-possession mechanism is visible.\n"
+        "The login flow is at src/auth.ts:1."
+    )
+    mock_client = Mock()
+    mock_client.messages.create.side_effect = [
+        Mock(content=[Mock(text=invalid_result)]),
+        Mock(content=[Mock(text=invalid_result)]),
+    ]
+    mock_anthropic.return_value = mock_client
+    analyzer = ClaudeAnalyzer("test-key", Mock())
+    analyzer.client = mock_client
+
+    result = analyzer.analyze_with_context(
+        "## X4 evidence classification contract\nAnalyze security from {repo_structure}",
+        "## Source Evidence Bundle\nsrc/auth.ts:1 | return issueJwt(apiKey);",
+    )
+
+    assert "**Severity:** MEDIUM" in result
+    assert "**Classification:** Architecture risk" in result
+    assert "**Evidence status:** Partial" in result
+    assert "**Severity:** HIGH" not in result

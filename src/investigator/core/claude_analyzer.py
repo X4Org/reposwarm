@@ -50,8 +50,12 @@ class ClaudeAnalyzer:
         r"\*\*Severity:\*\*\s*(?:CRITICAL|HIGH)\b",
         re.IGNORECASE,
     )
+    SEVERITY_PATTERN = re.compile(
+        r"\*\*Severity:\*\*\s*(?:CRITICAL|HIGH|MEDIUM|LOW|INFO)\b",
+        re.IGNORECASE,
+    )
     PRIVILEGED_ONLY_SECURITY_PATTERN = re.compile(
-        r"\b(?:operator logs?|administrative log access|process memory|memory disclosure|"
+        r"\b(?:operator logs?|administrative log access|CI (?:job )?logs?|process memory|memory disclosure|"
         r"code execution|deployment-secret access|read access to (?:source|build artifacts?|"
         r"deployed config)|future misuse)\b",
         re.IGNORECASE,
@@ -180,9 +184,11 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
         if "X4 evidence classification contract" not in prompt:
             return []
         issues = []
-        matches = list(cls.HIGH_SEVERITY_PATTERN.finditer(analysis_text))
-        for index, match in enumerate(matches):
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(analysis_text)
+        severity_matches = list(cls.SEVERITY_PATTERN.finditer(analysis_text))
+        for index, match in enumerate(severity_matches):
+            if cls.HIGH_SEVERITY_PATTERN.fullmatch(match.group(0)) is None:
+                continue
+            end = severity_matches[index + 1].start() if index + 1 < len(severity_matches) else len(analysis_text)
             finding = analysis_text[match.start():end]
             required = (
                 ("Classification", r"\*\*Classification:\*\*\s*Verified vulnerability\b"),
@@ -206,6 +212,45 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
                     "that cannot support a verified HIGH vulnerability"
                 )
         return issues
+
+    @classmethod
+    def _downgrade_invalid_high_findings(
+        cls,
+        analysis_text: str,
+        prompt: str,
+    ) -> str:
+        severity_matches = list(cls.SEVERITY_PATTERN.finditer(analysis_text))
+        rewritten = []
+        cursor = 0
+        for index, match in enumerate(severity_matches):
+            if cls.HIGH_SEVERITY_PATTERN.fullmatch(match.group(0)) is None:
+                continue
+            end = severity_matches[index + 1].start() if index + 1 < len(severity_matches) else len(analysis_text)
+            finding = analysis_text[match.start():end]
+            if not cls._security_evidence_issues(finding, prompt):
+                continue
+            downgraded = cls.HIGH_SEVERITY_PATTERN.sub("**Severity:** MEDIUM", finding, count=1)
+            downgraded = re.sub(
+                r"\*\*Classification:\*\*\s*[^\n]+",
+                "**Classification:** Architecture risk",
+                downgraded,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            downgraded = re.sub(
+                r"\*\*Evidence status:\*\*\s*[^\n]+",
+                "**Evidence status:** Partial",
+                downgraded,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            rewritten.append(analysis_text[cursor:match.start()])
+            rewritten.append(downgraded)
+            cursor = end
+        if not rewritten:
+            return analysis_text
+        rewritten.append(analysis_text[cursor:])
+        return "".join(rewritten)
     
     def analyze_with_context(self, prompt_template: str, repo_structure: str, 
                            previous_context: Optional[str] = None,
@@ -312,6 +357,14 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
                 self.logger.debug(
                     f"Repaired analysis preview (first 1000 chars): {analysis_text[:1000]}..."
                 )
+                remaining_security_issues = self._security_evidence_issues(analysis_text, prompt)
+                if remaining_security_issues:
+                    self.logger.warning(
+                        "Repaired analysis retained unsupported HIGH/CRITICAL claims; "
+                        "downgrading them deterministically: %s",
+                        "; ".join(remaining_security_issues),
+                    )
+                    analysis_text = self._downgrade_invalid_high_findings(analysis_text, prompt)
             
             return analysis_text
             
