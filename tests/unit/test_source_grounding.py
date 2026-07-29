@@ -362,3 +362,40 @@ def test_source_grounding_repairs_unverified_high_severity_security_findings(moc
     repair_prompt = mock_client.messages.create.call_args.kwargs["messages"][2]["content"]
     assert "re-evaluate severity" in repair_prompt
     assert "missing verified evidence fields" in repair_prompt
+
+
+@patch('anthropic.Anthropic')
+def test_source_grounding_repairs_high_findings_with_privileged_only_preconditions(mock_anthropic):
+    mock_client = Mock()
+    invalid_result = (
+        "**Severity:** HIGH\n"
+        "**Classification:** Verified vulnerability\n"
+        "**Evidence status:** Confirmed\n"
+        "**Exploit preconditions:** The attacker can trigger an error written to operator logs.\n"
+        "**Existing controls checked:** No redaction is visible.\n"
+        "The logger writes stack traces at src/logger.ts:1."
+    )
+    repaired_result = (
+        "**Severity:** MEDIUM\n"
+        "**Classification:** Architecture risk\n"
+        "**Evidence status:** Confirmed\n"
+        "**Exploit preconditions:** The attacker can trigger an error; log access is separately privileged.\n"
+        "**Existing controls checked:** No redaction is visible.\n"
+        "The bounded logging risk is visible at src/logger.ts:1."
+    )
+    mock_client.messages.create.side_effect = [
+        Mock(content=[Mock(text=invalid_result)]),
+        Mock(content=[Mock(text=repaired_result)]),
+    ]
+    mock_anthropic.return_value = mock_client
+    analyzer = ClaudeAnalyzer("test-key", Mock())
+    analyzer.client = mock_client
+
+    result = analyzer.analyze_with_context(
+        "## X4 evidence classification contract\nAnalyze security from {repo_structure}",
+        "## Source Evidence Bundle\nsrc/logger.ts:1 | console.error(error.stack);",
+    )
+
+    assert result == repaired_result
+    repair_prompt = mock_client.messages.create.call_args.kwargs["messages"][2]["content"]
+    assert "privileged-only prerequisite" in repair_prompt

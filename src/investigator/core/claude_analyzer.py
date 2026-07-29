@@ -50,6 +50,12 @@ class ClaudeAnalyzer:
         r"\*\*Severity:\*\*\s*(?:CRITICAL|HIGH)\b",
         re.IGNORECASE,
     )
+    PRIVILEGED_ONLY_SECURITY_PATTERN = re.compile(
+        r"\b(?:operator logs?|administrative log access|process memory|memory disclosure|"
+        r"code execution|deployment-secret access|read access to (?:source|build artifacts?|"
+        r"deployed config)|future misuse)\b",
+        re.IGNORECASE,
+    )
     SOURCE_GROUNDING_REPAIR_INSTRUCTIONS = """Your previous response does not satisfy the mandatory source-evidence rules.
 
 Rewrite the complete answer. It must contain at least 80 characters and at least one exact `relative/path.ext:line` citation copied from the Source Evidence Bundle. If the requested subsystem was not found, use at least three complete sentences to describe the bounded evidence inspected, cite relevant evidence, and state only that no matching implementation was found in that evidence. Do not return a terse phrase such as "no events" or "no database"."""
@@ -182,6 +188,11 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
             if missing:
                 issues.append(
                     f"{match.group(0)} finding is missing verified evidence fields: {', '.join(missing)}"
+                )
+            if cls.PRIVILEGED_ONLY_SECURITY_PATTERN.search(finding):
+                issues.append(
+                    f"{match.group(0)} finding relies on a privileged-only prerequisite "
+                    "that the evidence contract says is not HIGH by itself"
                 )
         return issues
     
