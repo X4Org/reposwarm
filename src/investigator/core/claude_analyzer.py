@@ -56,6 +56,12 @@ class ClaudeAnalyzer:
         r"deployed config)|future misuse)\b",
         re.IGNORECASE,
     )
+    UNVERIFIED_HIGH_SECURITY_PATTERN = re.compile(
+        r"\b(?:not (?:an? )?proven|does not show|not visible|"
+        r"no [^.]{0,80} (?:is )?(?:shown|visible)|"
+        r"any attacker-controlled data that reaches|secret-bearing input as an ordinary request field)\b",
+        re.IGNORECASE,
+    )
     SOURCE_GROUNDING_REPAIR_INSTRUCTIONS = """Your previous response does not satisfy the mandatory source-evidence rules.
 
 Rewrite the complete answer. It must contain at least 80 characters and at least one exact `relative/path.ext:line` citation copied from the Source Evidence Bundle. If the requested subsystem was not found, use at least three complete sentences to describe the bounded evidence inspected, cite relevant evidence, and state only that no matching implementation was found in that evidence. Do not return a terse phrase such as "no events" or "no database"."""
@@ -193,6 +199,11 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
                 issues.append(
                     f"{match.group(0)} finding relies on a privileged-only prerequisite "
                     "that the evidence contract says is not HIGH by itself"
+                )
+            if cls.UNVERIFIED_HIGH_SECURITY_PATTERN.search(finding):
+                issues.append(
+                    f"{match.group(0)} finding contains uncertainty or missing-control reasoning "
+                    "that cannot support a verified HIGH vulnerability"
                 )
         return issues
     

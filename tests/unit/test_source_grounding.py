@@ -399,3 +399,41 @@ def test_source_grounding_repairs_high_findings_with_privileged_only_preconditio
     assert result == repaired_result
     repair_prompt = mock_client.messages.create.call_args.kwargs["messages"][2]["content"]
     assert "privileged-only prerequisite" in repair_prompt
+
+
+@patch('anthropic.Anthropic')
+def test_source_grounding_repairs_high_findings_based_on_missing_controls(mock_anthropic):
+    mock_client = Mock()
+    invalid_result = (
+        "**Severity:** HIGH\n"
+        "**Classification:** Verified vulnerability\n"
+        "**Evidence status:** Confirmed\n"
+        "**Exploit preconditions:** Any attacker-controlled data that reaches this sink.\n"
+        "**Existing controls checked:** No parameter binding is shown.\n"
+        "The current value is a static query-builder reference, so this is not a proven "
+        "active injection path at src/repository.ts:1."
+    )
+    repaired_result = (
+        "**Severity:** MEDIUM\n"
+        "**Classification:** Architecture risk\n"
+        "**Evidence status:** Partial\n"
+        "**Exploit preconditions:** A future change would need to introduce attacker-controlled data.\n"
+        "**Existing controls checked:** The current value is a static query-builder reference.\n"
+        "The bounded pattern is visible at src/repository.ts:1."
+    )
+    mock_client.messages.create.side_effect = [
+        Mock(content=[Mock(text=invalid_result)]),
+        Mock(content=[Mock(text=repaired_result)]),
+    ]
+    mock_anthropic.return_value = mock_client
+    analyzer = ClaudeAnalyzer("test-key", Mock())
+    analyzer.client = mock_client
+
+    result = analyzer.analyze_with_context(
+        "## X4 evidence classification contract\nAnalyze security from {repo_structure}",
+        "## Source Evidence Bundle\nsrc/repository.ts:1 | const ref = knex.ref('posts.id');",
+    )
+
+    assert result == repaired_result
+    repair_prompt = mock_client.messages.create.call_args.kwargs["messages"][2]["content"]
+    assert "uncertainty or missing-control reasoning" in repair_prompt
