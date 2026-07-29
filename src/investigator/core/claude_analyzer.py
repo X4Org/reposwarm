@@ -39,11 +39,21 @@ class ClaudeAnalyzer:
 """
 
     SOURCE_CITATION_PATTERN = re.compile(
-        r"(?<![\w./-])[\w.-]+(?:/[\w.-]+)*\.[A-Za-z0-9]+:\d+"
+        r"(?<![\w./-])(?P<path>[\w@.-]+(?:/[\w@.-]+)*\.[A-Za-z0-9]+)"
+        r":(?P<start>\d+)(?:-(?P<end>\d+))?"
+    )
+    SOURCE_EVIDENCE_LINE_PATTERN = re.compile(
+        r"^(?P<path>[^:\n]+):(?P<line>\d+) \|",
+        re.MULTILINE,
+    )
+    HIGH_SEVERITY_PATTERN = re.compile(
+        r"\*\*Severity:\*\*\s*(?:CRITICAL|HIGH)\b",
+        re.IGNORECASE,
     )
     SOURCE_GROUNDING_REPAIR_INSTRUCTIONS = """Your previous response does not satisfy the mandatory source-evidence rules.
 
 Rewrite the complete answer. It must contain at least 80 characters and at least one exact `relative/path.ext:line` citation copied from the Source Evidence Bundle. If the requested subsystem was not found, use at least three complete sentences to describe the bounded evidence inspected, cite relevant evidence, and state only that no matching implementation was found in that evidence. Do not return a terse phrase such as "no events" or "no database"."""
+    SECURITY_REPAIR_INSTRUCTIONS = """For every HIGH or CRITICAL finding, re-evaluate severity from the cited executable source instead of merely adding fields. Keep HIGH or CRITICAL only when the prompt's verified-vulnerability contract is satisfied. Otherwise lower the severity and classify the item as an architecture risk or unverified hypothesis. Every retained HIGH or CRITICAL finding must include the exact bold fields `Classification`, `Evidence status`, `Exploit preconditions`, and `Existing controls checked`."""
 
     def __init__(self, api_key: str, logger):
         self.logger = logger
@@ -118,12 +128,62 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
             return prompt_template
 
     @classmethod
-    def _is_source_grounded_response(cls, analysis_text: str) -> bool:
-        """Return whether a model response meets the minimum grounding contract."""
-        return (
-            len(analysis_text.strip()) >= 80
-            and cls.SOURCE_CITATION_PATTERN.search(analysis_text) is not None
-        )
+    def _source_grounding_issues(
+        cls,
+        analysis_text: str,
+        repo_structure: str,
+    ) -> list[str]:
+        """Return concrete response defects against the supplied evidence bundle."""
+        issues = []
+        if len(analysis_text.strip()) < 80:
+            issues.append("the response has fewer than 80 characters")
+        citations = list(cls.SOURCE_CITATION_PATTERN.finditer(analysis_text))
+        if not citations:
+            issues.append("the response has no exact file-and-line citation")
+            return issues
+
+        evidence: dict[str, set[int]] = {}
+        for match in cls.SOURCE_EVIDENCE_LINE_PATTERN.finditer(repo_structure):
+            evidence.setdefault(match.group("path"), set()).add(int(match.group("line")))
+        for citation in citations:
+            path = citation.group("path")
+            start = int(citation.group("start"))
+            end = int(citation.group("end") or start)
+            available = evidence.get(path)
+            if available is None:
+                issues.append(f"cited path is absent from the Source Evidence Bundle: {path}")
+                continue
+            if end < start or any(line not in available for line in range(start, end + 1)):
+                issues.append(
+                    f"cited range is absent from the Source Evidence Bundle: {path}:{start}-{end}"
+                )
+        return list(dict.fromkeys(issues))
+
+    @classmethod
+    def _security_evidence_issues(
+        cls,
+        analysis_text: str,
+        prompt: str,
+    ) -> list[str]:
+        if "X4 evidence classification contract" not in prompt:
+            return []
+        issues = []
+        matches = list(cls.HIGH_SEVERITY_PATTERN.finditer(analysis_text))
+        for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(analysis_text)
+            finding = analysis_text[match.start():end]
+            required = (
+                ("Classification", r"\*\*Classification:\*\*\s*Verified vulnerability\b"),
+                ("Evidence status", r"\*\*Evidence status:\*\*\s*Confirmed\b"),
+                ("Exploit preconditions", r"\*\*Exploit preconditions:\*\*"),
+                ("Existing controls checked", r"\*\*Existing controls checked:\*\*"),
+            )
+            missing = [name for name, pattern in required if re.search(pattern, finding, re.IGNORECASE) is None]
+            if missing:
+                issues.append(
+                    f"{match.group(0)} finding is missing verified evidence fields: {', '.join(missing)}"
+                )
+        return issues
     
     def analyze_with_context(self, prompt_template: str, repo_structure: str, 
                            previous_context: Optional[str] = None,
@@ -193,9 +253,25 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
             self.logger.info(f"Received analysis from Claude ({len(analysis_text)} characters)")
             self.logger.debug(f"Analysis preview (first 1000 chars): {analysis_text[:1000]}...")
 
-            if source_grounded and not self._is_source_grounded_response(analysis_text):
+            grounding_issues = (
+                self._source_grounding_issues(analysis_text, repo_structure)
+                if source_grounded else []
+            )
+            security_issues = self._security_evidence_issues(analysis_text, prompt)
+            repair_issues = grounding_issues + security_issues
+            if repair_issues:
                 self.logger.warning(
-                    "Source-grounded response was too short or lacked a line citation; retrying once"
+                    "Response failed source/security evidence validation; retrying once: %s",
+                    "; ".join(repair_issues),
+                )
+                repair_instructions = self.SOURCE_GROUNDING_REPAIR_INSTRUCTIONS
+                if security_issues:
+                    repair_instructions = (
+                        f"{repair_instructions}\n\n{self.SECURITY_REPAIR_INSTRUCTIONS}"
+                    )
+                repair_instructions = (
+                    f"{repair_instructions}\n\nDetected validation problems:\n- "
+                    + "\n- ".join(repair_issues)
                 )
                 repair_response = self.client.messages.create(
                     model=model_id,
@@ -204,7 +280,7 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
                     messages=[
                         {"role": "user", "content": prompt},
                         {"role": "assistant", "content": analysis_text},
-                        {"role": "user", "content": self.SOURCE_GROUNDING_REPAIR_INSTRUCTIONS},
+                        {"role": "user", "content": repair_instructions},
                     ],
                 )
                 analysis_text = repair_response.content[0].text
