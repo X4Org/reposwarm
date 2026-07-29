@@ -176,6 +176,40 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
         return list(dict.fromkeys(issues))
 
     @classmethod
+    def _expand_unique_suffix_citations(
+        cls,
+        analysis_text: str,
+        repo_structure: str,
+    ) -> str:
+        """Expand a shortened citation only when one evidence path can match it."""
+        evidence_paths = list(
+            dict.fromkeys(
+                match.group("path")
+                for match in cls.SOURCE_EVIDENCE_LINE_PATTERN.finditer(repo_structure)
+            )
+        )
+
+        def expand(match: re.Match) -> str:
+            path = match.group("path")
+            if path in evidence_paths:
+                return match.group(0)
+
+            candidates = [
+                evidence_path
+                for evidence_path in evidence_paths
+                if evidence_path.endswith(f"/{path}")
+            ]
+            if len(candidates) != 1:
+                return match.group(0)
+
+            expanded = f"{candidates[0]}:{match.group('start')}"
+            if match.group("end"):
+                expanded += f"-{match.group('end')}"
+            return expanded
+
+        return cls.SOURCE_CITATION_PATTERN.sub(expand, analysis_text)
+
+    @classmethod
     def _security_evidence_issues(
         cls,
         analysis_text: str,
@@ -351,6 +385,11 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
                     ],
                 )
                 analysis_text = repair_response.content[0].text
+                if source_grounded:
+                    analysis_text = self._expand_unique_suffix_citations(
+                        analysis_text,
+                        repo_structure,
+                    )
                 self.logger.info(
                     f"Received repaired analysis from Claude ({len(analysis_text)} characters)"
                 )

@@ -509,3 +509,42 @@ def test_source_grounding_downgrades_security_claims_left_invalid_after_repair(m
     assert "**Classification:** Architecture risk" in result
     assert "**Evidence status:** Partial" in result
     assert "**Severity:** HIGH" not in result
+
+
+@patch('anthropic.Anthropic')
+def test_source_grounding_expands_unique_bare_paths_left_by_repair(mock_anthropic):
+    invalid_result = (
+        "The deployment identity is configured in "
+        "`deploy-model-runtime.yml:113-116`, which grants OIDC access."
+    )
+    mock_client = Mock()
+    mock_client.messages.create.side_effect = [
+        Mock(content=[Mock(text=invalid_result)]),
+        Mock(content=[Mock(text=invalid_result)]),
+    ]
+    mock_anthropic.return_value = mock_client
+    analyzer = ClaudeAnalyzer("test-key", Mock())
+    analyzer.client = mock_client
+
+    result = analyzer.analyze_with_context(
+        "Analyze deployment from {repo_structure}",
+        "## Source Evidence Bundle\n"
+        + "\n".join(
+            f".github/workflows/deploy-model-runtime.yml:{line} | permission line {line}"
+            for line in range(113, 117)
+        ),
+    )
+
+    assert "`deploy-model-runtime.yml:113-116`" not in result
+    assert "`.github/workflows/deploy-model-runtime.yml:113-116`" in result
+
+
+def test_source_grounding_does_not_guess_ambiguous_bare_paths():
+    analysis = "The deployment is defined at `deploy.yml:1` with repository-specific behavior."
+    evidence = (
+        "## Source Evidence Bundle\n"
+        ".github/workflows/deploy.yml:1 | workflow\n"
+        "ops/deploy.yml:1 | script\n"
+    )
+
+    assert ClaudeAnalyzer._expand_unique_suffix_citations(analysis, evidence) == analysis
