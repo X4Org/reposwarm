@@ -14,6 +14,9 @@ support truthful source and line citations.
 - Exclusion of dotenv, key/certificate, lock, generated, and binary files.
 - Redaction of credential-like assignments and private-key blocks.
 - Mandatory evidence instructions when a source bundle is present.
+- Deterministic citation repair after the single model repair pass: unique
+  suffix or dot-directory paths are expanded to the evidence path, and line
+  ranges are clamped to the contiguous evidence lines that follow their start.
 - Opt-in content-addressed prompt caching based on relevant section evidence,
   prompt/model policy, and dependency outputs instead of the whole commit.
 - A non-secret `reposwarm:<repo>:<section>` request tag for usage accounting.

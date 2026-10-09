@@ -99,9 +99,9 @@ def test_source_grounding_policy_versions_prompt_cache_entries():
         assert Config.prompt_cache_version("2") == "2"
     with patch.object(Config, "SOURCE_GROUNDING", True):
         with patch.object(Config, "SECTION_CACHE", False):
-            assert Config.prompt_cache_version("2") == "2-x4g3"
+            assert Config.prompt_cache_version("2") == "2-x4g4"
         with patch.object(Config, "SECTION_CACHE", True):
-            assert Config.prompt_cache_version("2") == "2-x4g3-sc1"
+            assert Config.prompt_cache_version("2") == "2-x4g4-sc1"
 
 
 def test_section_cache_reuses_unaffected_specialized_evidence():
@@ -128,7 +128,7 @@ src/db.ts:1 | export const schema = 'users';
         "prompt_content": "Analyze databases from {repo_structure}",
         "previous_context": None,
         "step_name": "DBs",
-        "prompt_version": "1-x4g3-sc1",
+        "prompt_version": "1-x4g4-sc1",
         "config_overrides": {"claude_model": "test-model"},
     }
 
@@ -153,7 +153,7 @@ src/api.ts:1 | export const route = '/v1';
         "prompt_content": "Analyze {repo_structure}",
         "previous_context": None,
         "step_name": "hl_overview",
-        "prompt_version": "2-x4g3-sc1",
+        "prompt_version": "2-x4g4-sc1",
         "config_overrides": {"claude_model": "test-model"},
     }
 
@@ -176,7 +176,7 @@ src/db.ts:1 | export const schema = 'users';
     base = {
         "prompt_content": "Analyze {repo_structure}",
         "previous_context": None,
-        "prompt_version": "1-x4g3-sc1",
+        "prompt_version": "1-x4g4-sc1",
         "config_overrides": {},
     }
 
@@ -190,7 +190,7 @@ def test_section_cache_invalidates_when_dependency_context_changes():
         "repo_structure": structure,
         "prompt_content": "Analyze services from {repo_structure} {previous_context}",
         "step_name": "service_dependencies",
-        "prompt_version": "1-x4g3-sc1",
+        "prompt_version": "1-x4g4-sc1",
         "config_overrides": {},
     }
 
@@ -203,7 +203,7 @@ def test_section_cache_invalidates_when_model_policy_changes():
         "prompt_content": "Analyze {repo_structure}",
         "previous_context": None,
         "step_name": "APIs",
-        "prompt_version": "1-x4g3-sc1",
+        "prompt_version": "1-x4g4-sc1",
     }
 
     mini = section_cache_identity(config_overrides={"claude_model": "mini", "max_tokens": 6000}, **base)
@@ -548,3 +548,69 @@ def test_source_grounding_does_not_guess_ambiguous_bare_paths():
     )
 
     assert ClaudeAnalyzer._expand_unique_suffix_citations(analysis, evidence) == analysis
+
+
+@patch('anthropic.Anthropic')
+def test_source_grounding_expands_dot_directory_paths_left_by_repair(mock_anthropic):
+    invalid_result = (
+        "The model runtime deployment workflow seeds metadata, see "
+        "`github/workflows/deploy-model-runtime.yml:105-112` for the toggles."
+    )
+    mock_client = Mock()
+    mock_client.messages.create.side_effect = [
+        Mock(content=[Mock(text=invalid_result)]),
+        Mock(content=[Mock(text=invalid_result)]),
+    ]
+    mock_anthropic.return_value = mock_client
+    analyzer = ClaudeAnalyzer("test-key", Mock())
+    analyzer.client = mock_client
+
+    result = analyzer.analyze_with_context(
+        "Analyze deployment from {repo_structure}",
+        "## Source Evidence Bundle\n"
+        + "\n".join(
+            f".github/workflows/deploy-model-runtime.yml:{line} | toggle line {line}"
+            for line in range(105, 113)
+        ),
+    )
+
+    assert "`github/workflows/deploy-model-runtime.yml:105-112`" not in result
+    assert "`.github/workflows/deploy-model-runtime.yml:105-112`" in result
+
+
+def test_source_grounding_does_not_treat_arbitrary_prefixes_as_dot_directories():
+    analysis = "Automation lives in `github/workflows/deploy.yml:1`."
+    evidence = (
+        "## Source Evidence Bundle\n"
+        "mygithub/workflows/deploy.yml:1 | workflow\n"
+    )
+
+    assert ClaudeAnalyzer._expand_unique_suffix_citations(analysis, evidence) == analysis
+
+
+def test_source_grounding_clamps_ranges_to_contiguous_evidence_lines():
+    evidence = "## Source Evidence Bundle\n" + "\n".join(
+        f"apps/bta-api/docker-compose.yml:{line} | service line {line}"
+        for line in range(1, 22)
+    )
+    analysis = (
+        "Local Postgres is defined in `apps/bta-api/docker-compose.yml:1-40` and "
+        "`apps/bta-api/docker-compose.yml:5-18`; `apps/bta-api/docker-compose.yml:30-35` "
+        "is beyond the evidence and `apps/bta-api/docker-compose.yml:21-25` ends at the file."
+    )
+
+    result = ClaudeAnalyzer._clamp_citation_ranges_to_evidence(analysis, evidence)
+
+    assert "`apps/bta-api/docker-compose.yml:1-21`" in result
+    assert "`apps/bta-api/docker-compose.yml:5-18`" in result
+    assert "`apps/bta-api/docker-compose.yml:30-35`" in result
+    assert "`apps/bta-api/docker-compose.yml:21`" in result
+    assert "1-40" not in result
+    assert "21-25" not in result
+
+
+def test_prompt_cache_version_binds_repaired_citation_semantics(monkeypatch):
+    monkeypatch.setattr(Config, "SOURCE_GROUNDING", True)
+    monkeypatch.setattr(Config, "SECTION_CACHE", True)
+
+    assert Config.prompt_cache_version("2") == "2-x4g4-sc1"
