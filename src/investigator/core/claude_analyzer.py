@@ -175,6 +175,16 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
                 )
         return list(dict.fromkeys(issues))
 
+    @staticmethod
+    def _evidence_path_matches_citation(evidence_path: str, cited_path: str) -> bool:
+        """True when the citation is the evidence path minus leading directories or a dot prefix."""
+        if evidence_path == cited_path or not evidence_path.endswith(cited_path):
+            return False
+        prefix = evidence_path[: -len(cited_path)]
+        # `deploy.yml` -> `.github/workflows/deploy.yml`, or
+        # `github/workflows/deploy.yml` -> `.github/workflows/deploy.yml`.
+        return prefix.endswith("/") or prefix == "." or prefix.endswith("/.")
+
     @classmethod
     def _expand_unique_suffix_citations(
         cls,
@@ -197,7 +207,7 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
             candidates = [
                 evidence_path
                 for evidence_path in evidence_paths
-                if evidence_path.endswith(f"/{path}")
+                if cls._evidence_path_matches_citation(evidence_path, path)
             ]
             if len(candidates) != 1:
                 return match.group(0)
@@ -208,6 +218,41 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
             return expanded
 
         return cls.SOURCE_CITATION_PATTERN.sub(expand, analysis_text)
+
+    @classmethod
+    def _clamp_citation_ranges_to_evidence(
+        cls,
+        analysis_text: str,
+        repo_structure: str,
+    ) -> str:
+        """Shrink a line range to the contiguous evidence lines that actually follow its start."""
+        evidence: dict[str, set[int]] = {}
+        for match in cls.SOURCE_EVIDENCE_LINE_PATTERN.finditer(repo_structure):
+            evidence.setdefault(match.group("path"), set()).add(int(match.group("line")))
+
+        def clamp(match: re.Match) -> str:
+            path = match.group("path")
+            available = evidence.get(path)
+            start = int(match.group("start"))
+            end = int(match.group("end") or start)
+            if available is None or start not in available or end <= start:
+                return match.group(0)
+            new_end = start
+            while new_end < end and (new_end + 1) in available:
+                new_end += 1
+            if new_end == end:
+                return match.group(0)
+            if new_end == start:
+                return f"{path}:{start}"
+            return f"{path}:{start}-{new_end}"
+
+        return cls.SOURCE_CITATION_PATTERN.sub(clamp, analysis_text)
+
+    @classmethod
+    def _normalize_repaired_citations(cls, analysis_text: str, repo_structure: str) -> str:
+        """Deterministic citation repairs applied after the single model repair pass."""
+        analysis_text = cls._expand_unique_suffix_citations(analysis_text, repo_structure)
+        return cls._clamp_citation_ranges_to_evidence(analysis_text, repo_structure)
 
     @classmethod
     def _security_evidence_issues(
@@ -386,7 +431,7 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
                 )
                 analysis_text = repair_response.content[0].text
                 if source_grounded:
-                    analysis_text = self._expand_unique_suffix_citations(
+                    analysis_text = self._normalize_repaired_citations(
                         analysis_text,
                         repo_structure,
                     )
