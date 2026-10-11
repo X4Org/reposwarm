@@ -225,7 +225,7 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
         analysis_text: str,
         repo_structure: str,
     ) -> str:
-        """Shrink a line range to the contiguous evidence lines that actually follow its start."""
+        """Shrink a range to the contiguous evidence lines after its start, or drop a range that starts outside the evidence."""
         evidence: dict[str, set[int]] = {}
         for match in cls.SOURCE_EVIDENCE_LINE_PATTERN.finditer(repo_structure):
             evidence.setdefault(match.group("path"), set()).add(int(match.group("line")))
@@ -235,7 +235,13 @@ Rewrite the complete answer. It must contain at least 80 characters and at least
             available = evidence.get(path)
             start = int(match.group("start"))
             end = int(match.group("end") or start)
-            if available is None or start not in available or end <= start:
+            if available is None:
+                return match.group(0)
+            if start not in available:
+                # The file is evidence but the cited lines are not: keep the
+                # file reference and drop the invented range.
+                return path
+            if end <= start:
                 return match.group(0)
             new_end = start
             while new_end < end and (new_end + 1) in available:
