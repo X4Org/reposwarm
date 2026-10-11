@@ -16,7 +16,8 @@ support truthful source and line citations.
 - Mandatory evidence instructions when a source bundle is present.
 - Deterministic citation repair after the single model repair pass: unique
   suffix or dot-directory paths are expanded to the evidence path, and line
-  ranges are clamped to the contiguous evidence lines that follow their start.
+  ranges are clamped to the contiguous evidence lines that follow their start,
+  and a range that starts outside the evidence is reduced to the file reference.
 - Opt-in content-addressed prompt caching based on relevant section evidence,
   prompt/model policy, and dependency outputs instead of the whole commit.
 - A non-secret `reposwarm:<repo>:<section>` request tag for usage accounting.
