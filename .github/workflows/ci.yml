@@ -12,7 +12,15 @@ on:
         required: true
         type: string
 
+# Self-hosted jobs run on the repo runner on control node x4-control-1. This
+# repository is public and code from fork pull requests must never run there,
+# so pull_request jobs skip pull requests from forks. A fork can still edit this
+# file in its own pull request; requiring approval before workflows run for
+# outside contributors is what stops that.
 jobs:
+  # Left on a GitHub-hosted runner pending a decision: it needs sudo ctr
+  # (containerd) to pull and export the worker image, which is not something
+  # to run on the control node.
   export-worker:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -56,8 +64,8 @@ jobs:
           compression-level: 0
 
   unit-tests:
-    if: github.event_name != 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [x4-control, reposwarm]
     strategy:
       matrix:
         python-version: ['3.12', '3.13']
@@ -70,6 +78,49 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # setup-python's interpreter lives in the persistent tool cache; install
+      # into a virtualenv in the job's temp dir so nothing outlives the job.
+      - name: Create virtualenv
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      # Keeps every job on X4's self-hosted runners: fails when any workflow's
+      # runs-on (including matrix values and input defaults it expands) or a
+      # reusable workflow's runner input names a GitHub-hosted runner label.
+      - name: Reject GitHub-hosted runners
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip install --quiet pyyaml
+          python3 - <<'PY'
+          import glob, re, sys, yaml
+          HOSTED = re.compile(r"^(ubuntu|windows|macos)(-|$)|^(blacksmith|buildjet|depot|namespace-profile|ubicloud|warp)-", re.I)
+          ALLOWED = {"ci.yml:docker", "ci.yml:export-worker"}  # "<file>:<job>" pairs deliberately left on GitHub-hosted runners
+          EXPR = "$" + "{{"
+          def strings(v):
+              if isinstance(v, str): yield v
+              elif isinstance(v, list):
+                  for x in v: yield from strings(x)
+              elif isinstance(v, dict):
+                  for x in v.values(): yield from strings(x)
+          bad = []
+          for path in sorted(glob.glob(".github/workflows/*.y*ml")):
+              wf = yaml.safe_load(open(path)) or {}
+              on = wf.get("on", wf.get(True)) or {}
+              defaults = [i.get("default") for t in ("workflow_call", "workflow_dispatch") if isinstance(on, dict)
+                          for i in ((on.get(t) or {}).get("inputs") or {}).values() if isinstance(i, dict)]
+              for name, job in (wf.get("jobs") or {}).items():
+                  if f"{path.split('/')[-1]}:{name}" in ALLOWED: continue
+                  values = list(strings(job.get("runs-on")))
+                  values += list(strings({k: v for k, v in (job.get("with") or {}).items() if k in ("runner", "runs-on")}))
+                  if any(EXPR in v for v in values):
+                      values += list(strings((job.get("strategy") or {}).get("matrix"))) + list(strings(defaults))
+                  bad += [f"{path}: job '{name}' -> {v}" for v in values if HOSTED.search(v.strip())]
+          for b in bad: print(f"::error::GitHub-hosted runner label in {b}")
+          print("No GitHub-hosted runner labels found." if not bad else "Use X4's self-hosted runner labels instead.")
+          sys.exit(1 if bad else 0)
+          PY
+
       - name: Install dependencies
         run: |
           pip install -e ".[dev]"
@@ -79,7 +130,8 @@ jobs:
           python -m pytest tests/unit/ -v --tb=short
 
   integration-tests:
-    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [x4-control, reposwarm]
     needs: unit-tests
 
     steps:
@@ -90,6 +142,13 @@ jobs:
         with:
           python-version: '3.12'
 
+      # setup-python's interpreter lives in the persistent tool cache; install
+      # into a virtualenv in the job's temp dir so nothing outlives the job.
+      - name: Create virtualenv
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
       - name: Install dependencies
         run: |
           pip install -e ".[dev]"
@@ -99,7 +158,7 @@ jobs:
           python -m pytest tests/integration/ -v --tb=short
 
   changes:
-    runs-on: ubuntu-latest
+    runs-on: [x4-control, reposwarm]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     outputs:
       code: ${{ steps.filter.outputs.code }}
@@ -123,6 +182,9 @@ jobs:
           done <<< "$FILES"
           echo "code=$CODE_CHANGED" >> "$GITHUB_OUTPUT"
 
+  # Left on a GitHub-hosted runner pending a decision: a multi-platform
+  # (amd64 + arm64 under emulation) image build is too heavy for the control
+  # node.
   docker:
     needs: [integration-tests, changes]
     runs-on: ubuntu-latest
